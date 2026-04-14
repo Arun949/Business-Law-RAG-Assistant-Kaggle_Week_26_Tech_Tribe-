@@ -57,3 +57,26 @@ def chunk_entry(entry: dict) -> list[dict]:
             })
 
     return chunks
+    
+# ── Embedding 
+def count_tokens(texts: list[str]) -> int:
+    return sum(len(enc.encode(t)) for t in texts)
+def embed_batch(texts: list[str]) -> list[list[float]]:
+    """Call OpenAI embeddings API for a batch of texts."""
+    response = client.embeddings.create(model=EMBED_MODEL, input=texts)
+    # Sort by index to guarantee order matches input
+    return [item.embedding for item in sorted(response.data, key=lambda x: x.index)]
+def embed_all(texts: list[str]) -> np.ndarray:
+    """Embed all texts in batches; return (N, dim) float32 array."""
+    all_embeddings: list[list[float]] = []
+    total = len(texts)
+    for start in range(0, total, BATCH_SIZE):
+        batch = texts[start : start + BATCH_SIZE]
+        batch_embeddings = embed_batch(batch)
+        all_embeddings.extend(batch_embeddings)
+        end = min(start + BATCH_SIZE, total)
+        print(f"  Embedded {end}/{total} chunks")
+        # Brief pause to stay inside rate limits when corpus is large
+        if end < total:
+            time.sleep(0.2)
+    return np.array(all_embeddings, dtype="float32")
