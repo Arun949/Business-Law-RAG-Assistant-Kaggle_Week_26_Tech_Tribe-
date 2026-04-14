@@ -3,7 +3,7 @@ import json
 import re
 from pathlib import Path
 
-PDF_DIR = Path("data/pdfs")
+PDF_DIR = Path("data/sources")
 OUTPUT_DIR = Path("data")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
