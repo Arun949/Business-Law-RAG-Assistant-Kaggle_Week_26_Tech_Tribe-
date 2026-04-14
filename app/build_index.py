@@ -80,3 +80,57 @@ def embed_all(texts: list[str]) -> np.ndarray:
         if end < total:
             time.sleep(0.2)
     return np.array(all_embeddings, dtype="float32")
+
+# ── Main 
+def main():
+    corpus_path = "data/corpus.json"
+    index_path  = "data/my_index.faiss"
+    chunks_path = "data/chunks.json"
+    # ── 1. Load corpus 
+    print(f"Loading corpus from {corpus_path} ...")
+    with open(corpus_path, "r", encoding="utf-8") as f:
+        corpus = json.load(f)
+    print(f"  {len(corpus)} pages loaded")
+    # ── 2. Chunk 
+    print("\nChunking pages ...")
+    all_chunks: list[dict] = []
+    skipped = 0
+    for entry in corpus:
+        if entry.get("char_count", len(entry["text"])) < MIN_CHUNK_CHARS:
+            skipped += 1
+            continue
+        all_chunks.extend(chunk_entry(entry))
+    print(f"  Skipped {skipped} low-text pages (< {MIN_CHUNK_CHARS} chars)")
+    print(f"  Total chunks produced: {len(all_chunks)}")
+    if not all_chunks:
+        print("ERROR: No chunks produced. Check corpus.json.")
+        return
+    # ── 3. Estimate cost 
+    texts = [c["text"] for c in all_chunks]
+    total_tokens = count_tokens(texts)
+    estimated_cost = (total_tokens / 1_000_000) * COST_PER_1M_TOKENS
+    print(f"\nTokens to embed : {total_tokens:,}")
+    print(f"Estimated cost  : ${estimated_cost:.4f}")
+    print()
+    # ── 4. Embed 
+    print("Embedding chunks ...")
+    embeddings = embed_all(texts)
+    # ── 5. Normalize → cosine similarity via IndexFlatIP 
+    print("\nBuilding FAISS index (cosine similarity) ...")
+    faiss.normalize_L2(embeddings)          # in-place L2 normalisation
+    dim   = embeddings.shape[1]
+    index = faiss.IndexFlatIP(dim)          # inner product == cosine for unit vectors
+    index.add(embeddings)
+    print(f"  Index contains {index.ntotal} vectors (dim={dim})")
+    # ── 6. Save 
+    os.makedirs("app", exist_ok=True)
+    faiss.write_index(index, index_path)
+    with open(chunks_path, "w", encoding="utf-8") as f:
+        json.dump(all_chunks, f, ensure_ascii=False, indent=2)
+    actual_cost = (total_tokens / 1_000_000) * COST_PER_1M_TOKENS
+    print(f"\n✅  Saved {index_path}")
+    print(f"✅  Saved {chunks_path}  ({len(all_chunks)} chunks)")
+    print(f"💰  Embedding cost: ${actual_cost:.4f}")
+if __name__ == "__main__":
+    main()
+
