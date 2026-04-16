@@ -17,38 +17,64 @@ OVERLAP_CHARS      = 120
 MIN_CHUNK_CHARS    = 50    
 BATCH_SIZE         = 100   
 COST_PER_1M_TOKENS = 0.020 
-# ── Chunking 
-def split_paragraphs(text: str) -> list[str]:
-    """Split text on double newlines; return non-empty paragraphs."""
-    return [p.strip() for p in re.split(r'\n{2,}', text) if p.strip()]
+# ── Chunking (sentence-boundary aware) ────────────────────────────────────────
+# Splits on sentence boundaries first so chunks never cut mid-sentence,
+# then groups sentences until CHUNK_TARGET_CHARS is reached.
+# Overlap carries the last few sentences into the next chunk for context.
+
+_SENT_RE = re.compile(r'(?<=[.!?])\s+')
+
+def _split_sentences(text: str) -> list[str]:
+    """Split text into sentences on .!? boundaries."""
+    sentences = [s.strip() for s in _SENT_RE.split(text) if s.strip()]
+    # If no sentence boundaries found, fall back to the whole paragraph as one unit
+    return sentences if sentences else [text.strip()]
 
 def chunk_entry(entry: dict) -> list[dict]:
     text = entry["text"]
     if len(text) < MIN_CHUNK_CHARS:
         return []
-    paragraphs = split_paragraphs(text)
-    if not paragraphs:
+
+    # Split into paragraphs first, then sentences within each paragraph
+    paragraphs = [p.strip() for p in re.split(r'\n{2,}', text) if p.strip()]
+    sentences: list[str] = []
+    for para in paragraphs:
+        sentences.extend(_split_sentences(para))
+
+    if not sentences:
         return []
+
     chunks: list[dict] = []
     window: list[str] = []
     window_len = 0
-    for para in paragraphs:
-        if window_len + len(para) > CHUNK_TARGET_CHARS and window:
-            chunk_text = "\n\n".join(window)
+
+    for sent in sentences:
+        if window_len + len(sent) > CHUNK_TARGET_CHARS and window:
+            chunk_text = " ".join(window)
             if len(chunk_text.strip()) >= MIN_CHUNK_CHARS:
                 chunks.append({
                     "text": chunk_text,
                     "source": entry["source"],
                     "page": entry["page"],
                 })
-            window = [window[-1]]
-            window_len = len(window[0])
-        window.append(para)
-        window_len += len(para)
+            # Overlap: carry last sentences whose total length ≤ OVERLAP_CHARS
+            overlap: list[str] = []
+            overlap_len = 0
+            for s in reversed(window):
+                if overlap_len + len(s) <= OVERLAP_CHARS:
+                    overlap.insert(0, s)
+                    overlap_len += len(s)
+                else:
+                    break
+            window = overlap
+            window_len = overlap_len
+
+        window.append(sent)
+        window_len += len(sent)
 
     # Flush remaining
     if window:
-        chunk_text = "\n\n".join(window)
+        chunk_text = " ".join(window)
         if len(chunk_text.strip()) >= MIN_CHUNK_CHARS:
             chunks.append({
                 "text": chunk_text,
@@ -57,7 +83,6 @@ def chunk_entry(entry: dict) -> list[dict]:
             })
 
     return chunks
-    
 # ── Embedding 
 def count_tokens(texts: list[str]) -> int:
     return sum(len(enc.encode(t)) for t in texts)
@@ -80,7 +105,6 @@ def embed_all(texts: list[str]) -> np.ndarray:
         if end < total:
             time.sleep(0.2)
     return np.array(all_embeddings, dtype="float32")
-
 # ── Main 
 def main():
     corpus_path = "data/corpus.json"
@@ -133,4 +157,3 @@ def main():
     print(f"💰  Embedding cost: ${actual_cost:.4f}")
 if __name__ == "__main__":
     main()
-
