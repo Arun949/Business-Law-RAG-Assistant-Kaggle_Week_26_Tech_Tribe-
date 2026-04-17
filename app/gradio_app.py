@@ -1,7 +1,7 @@
 """
 gradio_app.py — Gradio chatbot UI for the 3-agent pipeline.
 
-Run from project root: webui
+Run from project root:
     python app/gradio_app.py
 """
 
@@ -76,7 +76,7 @@ def _run_judge(query: str, answer: str, corpus_context: str) -> str:
 
 # ── Chat handler ──────────────────────────────────────────────────────────────
 
-def chat(query: str, history: list, session_cost: float, hitl_state: dict):
+def chat(query: str, history: list, session_cost: float, hitl_state: dict, use_web: bool):
     if not query.strip():
         return (history,
                 f"**Session cost:** ${session_cost:.4f}  \n**Last query:** $0.0000",
@@ -86,7 +86,7 @@ def chat(query: str, history: list, session_cost: float, hitl_state: dict):
                 hitl_state,
                 "")
 
-    final_answer, corpus_chunks, web_results, query_cost, corpus_context = run_pipeline(query)
+    final_answer, corpus_chunks, web_results, query_cost, corpus_context = run_pipeline(query, use_web=use_web)
     display_answer = final_answer
 
     new_cost  = session_cost + query_cost
@@ -259,6 +259,13 @@ with gr.Blocks(title="Multi-Agent RAG Assistant") as demo:
                 )
                 send_btn = gr.Button("Send ➤", variant="primary", scale=1)
 
+            with gr.Row():
+                agent_toggle = gr.Button(
+                    "🤖 AI Agent: OFF  (corpus only)",
+                    variant="secondary",
+                    size="sm",
+                )
+
             # ── Human-in-the-Loop buttons ─────────────────────────────────────
             gr.Markdown("**Human-in-the-Loop**")
             with gr.Row():
@@ -303,15 +310,30 @@ with gr.Blocks(title="Multi-Agent RAG Assistant") as demo:
             )
 
     # ── State ─────────────────────────────────────────────────────────────────
-    cost_state = gr.State(0.0)
-    hitl_state = gr.State({})
+    cost_state    = gr.State(0.0)
+    hitl_state    = gr.State({})
+    use_web_state = gr.State(False)   # AI Agent OFF by default
+
+    # ── Toggle handler ────────────────────────────────────────────────────────
+
+    def _toggle_agent(current: bool):
+        new_val = not current
+        if new_val:
+            label = "🤖 AI Agent: ON  (corpus + live web)"
+            variant = "primary"
+        else:
+            label = "🤖 AI Agent: OFF  (corpus only)"
+            variant = "secondary"
+        return new_val, gr.update(value=label, variant=variant)
+
+    agent_toggle.click(_toggle_agent, inputs=use_web_state, outputs=[use_web_state, agent_toggle])
 
     # ── Event wiring ──────────────────────────────────────────────────────────
 
     # Send / submit
     chat_outputs = [chatbot, cost_display, cost_state, corpus_display, judge_display, hitl_state, msg_box]
-    msg_box.submit(chat, [msg_box, chatbot, cost_state, hitl_state], chat_outputs)
-    send_btn.click(chat,  [msg_box, chatbot, cost_state, hitl_state], chat_outputs)
+    msg_box.submit(chat, [msg_box, chatbot, cost_state, hitl_state, use_web_state], chat_outputs)
+    send_btn.click(chat,  [msg_box, chatbot, cost_state, hitl_state, use_web_state], chat_outputs)
 
     # Approve → generate report + show preview + reveal Add-to-DB button
     approve_btn.click(
