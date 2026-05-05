@@ -1,0 +1,20 @@
+[project]
+name = "kaggle-week26-tech-tribe"
+version = "0.1.0"
+description = "RAG pipeline with hybrid retrieval, MCP server, and Gradio UI"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.0.0",
+    "python-dotenv",
+    "numpy",
+    "faiss-cpu",
+    "tiktoken",
+    "gradio",
+    "rank-bm25",
+    "fastmcp",
+    "PyMuPDF",
+    "requests",
+    "signalbot",
+    "duckduckgo-search",
+]
+
