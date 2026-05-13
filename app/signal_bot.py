@@ -121,41 +121,11 @@ class AskCommand(Command):
 
 # ── Bot setup ────────────────────────────────────────────────────────────────
 
-def _http_base(service: str) -> str:
-    """Ensure service has an http:// prefix for urllib calls."""
-    if service.startswith("http://") or service.startswith("https://"):
-        return service
-    return f"http://{service}"
-
-
-def _number_registered(service: str, phone: str, timeout: float = 3.0) -> bool:
-    """Return True if *phone* is registered with signal-cli-rest-api at *service*."""
-    import urllib.request, json
-    url = f"{_http_base(service)}/v1/accounts"
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
-            accounts = json.loads(r.read().decode())
-            return phone in accounts
-    except Exception:
-        return False
-
-
 def main():
     if not SIGNAL_PHONE:
         print("ERROR: Set SIGNAL_PHONE_NUMBER in .env")
         print("  Example: SIGNAL_PHONE_NUMBER=+33766977633")
         sys.exit(1)
-
-    if not _number_registered(SIGNAL_SERVICE, SIGNAL_PHONE):
-        print(
-            f"[Signal] {SIGNAL_PHONE} is not registered with signal-cli at {SIGNAL_SERVICE}.\n"
-            "[Signal] Register it first:\n"
-            f"  curl -X POST '{SIGNAL_SERVICE}/v1/register/{SIGNAL_PHONE}'\n"
-            "  # then verify with the SMS code you receive\n"
-            f"  curl -X POST '{SIGNAL_SERVICE}/v1/register/{SIGNAL_PHONE}/verify/CODE'\n"
-            "[Signal] Bot will not start until the number is registered."
-        )
-        sys.exit(2)
 
     config = {
         "signal_service": SIGNAL_SERVICE,

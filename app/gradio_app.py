@@ -16,7 +16,6 @@ from agents import run_pipeline, hitl_more_research, hitl_more_web
 from llm_judge import judge_faithfulness
 from mcp_server import create_markdown_report, add_web_results_to_index
 from main import reload_index
-from analytics import build_analytics_tab
 
 EXAMPLES = [
     "What are the first ten amendments to the US Constitution called?",
@@ -77,8 +76,7 @@ def _run_judge(query: str, answer: str, corpus_context: str) -> str:
 
 # ── Chat handler ──────────────────────────────────────────────────────────────
 
-def chat(query: str, history: list, session_cost: float, hitl_state: dict,
-         use_web: bool, session_log: list):
+def chat(query: str, history: list, session_cost: float, hitl_state: dict, use_web: bool):
     if not query.strip():
         return (history,
                 f"**Session cost:** ${session_cost:.4f}  \n**Last query:** $0.0000",
@@ -86,8 +84,7 @@ def chat(query: str, history: list, session_cost: float, hitl_state: dict,
                 _PLACEHOLDER_CORPUS,
                 "*Ask a question to see the faithfulness verdict.*",
                 hitl_state,
-                "",
-                session_log)
+                "")
 
     final_answer, corpus_chunks, web_results, query_cost, corpus_context = run_pipeline(query, use_web=use_web)
     display_answer = final_answer
@@ -97,19 +94,6 @@ def chat(query: str, history: list, session_cost: float, hitl_state: dict,
     corpus_md = _format_corpus_panel(corpus_chunks)
     judge_md  = _run_judge(query, final_answer, corpus_context)
 
-    # Determine faithfulness label for session log
-    is_refusal = any(p in final_answer.lower() for p in REFUSAL_PHRASES)
-    if is_refusal:
-        faith_label = "n/a"
-    elif "✅" in judge_md:
-        faith_label = "faithful"
-    elif "❌" in judge_md:
-        faith_label = "unfaithful"
-    else:
-        faith_label = "n/a"
-
-    best_rrf = corpus_chunks[0]["score"] if corpus_chunks else 0.0
-
     new_hitl_state = {
         "query":         query,
         "corpus_chunks": corpus_chunks,
@@ -117,21 +101,12 @@ def chat(query: str, history: list, session_cost: float, hitl_state: dict,
         "last_answer":   display_answer,
     }
 
-    new_log = session_log + [{
-        "question": query,
-        "category": "live",
-        "best_rrf": best_rrf,
-        "faithful": faith_label,
-        "cost":     query_cost,
-        "ts":       time.strftime("%H:%M:%S"),
-    }]
-
     history = history + [
         {"role": "user",      "content": query},
         {"role": "assistant", "content": display_answer},
     ]
 
-    return history, cost_md, new_cost, corpus_md, judge_md, new_hitl_state, "", new_log
+    return history, cost_md, new_cost, corpus_md, judge_md, new_hitl_state, ""
 
 
 # ── HITL: Approve → generate report + preview ────────────────────────────────
@@ -271,134 +246,135 @@ with gr.Blocks(title="Multi-Agent RAG Assistant") as demo:
         "> *GPT-4o-mini · FAISS + BM25 · DuckDuckGo + Wikipedia MCP*"
     )
 
-    # ── Shared state (defined before tabs so both tabs can reference it) ───────
+    with gr.Row(equal_height=False):
+
+        # ── Left: chat panel ──────────────────────────────────────────────────
+        with gr.Column(scale=3):
+            chatbot = gr.Chatbot(label="Conversation", height=400)
+
+            with gr.Row():
+                msg_box  = gr.Textbox(
+                    placeholder="Ask a question…",
+                    label="", container=False, scale=5,
+                )
+                send_btn = gr.Button("Send ➤", variant="primary", scale=1)
+
+            with gr.Row():
+                agent_toggle = gr.Button(
+                    "🤖 AI Agent: OFF  (corpus only)",
+                    variant="secondary",
+                    size="sm",
+                )
+
+            # ── Human-in-the-Loop buttons ─────────────────────────────────────
+            gr.Markdown("**Human-in-the-Loop**")
+            with gr.Row():
+                approve_btn  = gr.Button("✅ Approve",  variant="primary",   size="sm")
+                rewrite_btn  = gr.Button("✏️ Rewrite",  variant="secondary", size="sm")
+                rephrase_btn = gr.Button("🔄 Rephrase", variant="secondary", size="sm")
+
+            # Rewrite sub-row (hidden until Rewrite is clicked)
+            with gr.Row(visible=False) as rewrite_row:
+                gr.Markdown("*Rewrite using more:*")
+                corpus_btn = gr.Button("📚 Corpus", variant="secondary", size="sm")
+                web_btn    = gr.Button("🌐 Web",    variant="secondary", size="sm")
+
+            with gr.Row():
+                clear_btn  = gr.Button("🗑  Clear",       variant="stop",      size="sm")
+                export_btn = gr.Button("💾  Export chat", variant="secondary", size="sm")
+
+            report_file    = gr.File(label="📄 Approved Report", visible=False)
+            report_preview = gr.Markdown(visible=False)
+            add_db_btn     = gr.Button("🗃️ Add Web Results to Database", variant="primary", size="sm", visible=False)
+            db_status      = gr.Markdown(visible=False)
+            export_file    = gr.File(label="💾 Download", visible=False)
+            gr.Examples(examples=EXAMPLES, inputs=msg_box, label="Example questions")
+
+        # ── Right: info panel ─────────────────────────────────────────────────
+        with gr.Column(scale=1, min_width=280):
+            gr.Markdown("### 💰 Cost Tracker")
+            cost_display = gr.Markdown("**Session cost:** $0.0000  \n**Last query:** $0.0000")
+
+            gr.Markdown("---")
+            corpus_display = gr.Markdown(_PLACEHOLDER_CORPUS)
+
+            gr.Markdown("---\n### 🔍 LLM-as-Judge")
+            judge_display = gr.Markdown("*Faithfulness verdict will appear here.*")
+
+            gr.Markdown(
+                "---\n"
+                "**Model:** gpt-4o-mini  \n"
+                "**Embeddings:** text-embedding-3-small  \n"
+                "**Retrieval:** FAISS + BM25 → RRF  \n"
+                "**Top-K:** 5 chunks"
+            )
+
+    # ── State ─────────────────────────────────────────────────────────────────
     cost_state    = gr.State(0.0)
     hitl_state    = gr.State({})
-    use_web_state = gr.State(False)
-    session_log   = gr.State([])       # list of per-query dicts for analytics
-
-    with gr.Tabs():
-
-        # ══════════════════════════════════════════════════════════════════════
-        # TAB 1 — Chat
-        # ══════════════════════════════════════════════════════════════════════
-        with gr.Tab("💬 Chat"):
-
-            with gr.Row(equal_height=False):
-
-                # ── Left: chat panel ──────────────────────────────────────────
-                with gr.Column(scale=3):
-                    chatbot = gr.Chatbot(label="Conversation", height=400)
-
-                    with gr.Row():
-                        msg_box  = gr.Textbox(
-                            placeholder="Ask a question…",
-                            label="", container=False, scale=5,
-                        )
-                        send_btn = gr.Button("Send ➤", variant="primary", scale=1)
-
-                    with gr.Row():
-                        agent_toggle = gr.Button(
-                            "🤖 AI Agent: OFF  (corpus only)",
-                            variant="secondary",
-                            size="sm",
-                        )
-
-                    gr.Markdown("**Human-in-the-Loop**")
-                    with gr.Row():
-                        approve_btn  = gr.Button("✅ Approve",  variant="primary",   size="sm")
-                        rewrite_btn  = gr.Button("✏️ Rewrite",  variant="secondary", size="sm")
-                        rephrase_btn = gr.Button("🔄 Rephrase", variant="secondary", size="sm")
-
-                    with gr.Row(visible=False) as rewrite_row:
-                        gr.Markdown("*Rewrite using more:*")
-                        corpus_btn = gr.Button("📚 Corpus", variant="secondary", size="sm")
-                        web_btn    = gr.Button("🌐 Web",    variant="secondary", size="sm")
-
-                    with gr.Row():
-                        clear_btn  = gr.Button("🗑  Clear",       variant="stop",      size="sm")
-                        export_btn = gr.Button("💾  Export chat", variant="secondary", size="sm")
-
-                    report_file    = gr.File(label="📄 Approved Report", visible=False)
-                    report_preview = gr.Markdown(visible=False)
-                    add_db_btn     = gr.Button("🗃️ Add Web Results to Database",
-                                               variant="primary", size="sm", visible=False)
-                    db_status      = gr.Markdown(visible=False)
-                    export_file    = gr.File(label="💾 Download", visible=False)
-                    gr.Examples(examples=EXAMPLES, inputs=msg_box, label="Example questions")
-
-                # ── Right: info panel ─────────────────────────────────────────
-                with gr.Column(scale=1, min_width=280):
-                    gr.Markdown("### 💰 Cost Tracker")
-                    cost_display = gr.Markdown("**Session cost:** $0.0000  \n**Last query:** $0.0000")
-
-                    gr.Markdown("---")
-                    corpus_display = gr.Markdown(_PLACEHOLDER_CORPUS)
-
-                    gr.Markdown("---\n### 🔍 LLM-as-Judge")
-                    judge_display = gr.Markdown("*Faithfulness verdict will appear here.*")
-
-                    gr.Markdown(
-                        "---\n"
-                        "**Model:** gpt-4o-mini  \n"
-                        "**Embeddings:** text-embedding-3-small  \n"
-                        "**Retrieval:** FAISS + BM25 → RRF  \n"
-                        "**Top-K:** 5 chunks"
-                    )
-
-        # ══════════════════════════════════════════════════════════════════════
-        # TAB 2 — Analytics
-        # ══════════════════════════════════════════════════════════════════════
-        with gr.Tab("📊 Analytics") as analytics_tab:
-            refresh_btn, refresh_fn, analytics_outputs = build_analytics_tab(session_log)
+    use_web_state = gr.State(False)   # AI Agent OFF by default
 
     # ── Toggle handler ────────────────────────────────────────────────────────
 
     def _toggle_agent(current: bool):
         new_val = not current
-        label   = ("🤖 AI Agent: ON  (corpus + live web)" if new_val
-                   else "🤖 AI Agent: OFF  (corpus only)")
-        variant = "primary" if new_val else "secondary"
+        if new_val:
+            label = "🤖 AI Agent: ON  (corpus + live web)"
+            variant = "primary"
+        else:
+            label = "🤖 AI Agent: OFF  (corpus only)"
+            variant = "secondary"
         return new_val, gr.update(value=label, variant=variant)
 
     agent_toggle.click(_toggle_agent, inputs=use_web_state, outputs=[use_web_state, agent_toggle])
 
     # ── Event wiring ──────────────────────────────────────────────────────────
 
-    chat_outputs = [chatbot, cost_display, cost_state, corpus_display,
-                    judge_display, hitl_state, msg_box, session_log]
-    msg_box.submit(chat, [msg_box, chatbot, cost_state, hitl_state, use_web_state, session_log], chat_outputs)
-    send_btn.click(chat,  [msg_box, chatbot, cost_state, hitl_state, use_web_state, session_log], chat_outputs)
+    # Send / submit
+    chat_outputs = [chatbot, cost_display, cost_state, corpus_display, judge_display, hitl_state, msg_box]
+    msg_box.submit(chat, [msg_box, chatbot, cost_state, hitl_state, use_web_state], chat_outputs)
+    send_btn.click(chat,  [msg_box, chatbot, cost_state, hitl_state, use_web_state], chat_outputs)
 
-    approve_btn.click(hitl_approve, [hitl_state], [report_file, report_preview, add_db_btn])
+    # Approve → generate report + show preview + reveal Add-to-DB button
+    approve_btn.click(
+        hitl_approve,
+        [hitl_state],
+        [report_file, report_preview, add_db_btn],
+    )
 
+    # Add to Database → embed web results, update index, show status
     add_db_btn.click(
-        hitl_add_to_db, [hitl_state], [db_status, add_db_btn],
+        hitl_add_to_db,
+        [hitl_state],
+        [db_status, add_db_btn],
     ).then(lambda: gr.update(visible=True), outputs=db_status)
 
+    # Rewrite → show sub-row
     rewrite_btn.click(lambda: gr.update(visible=True), outputs=rewrite_row)
 
+    # Rewrite → Corpus
     hitl_row_outputs = [chatbot, cost_display, cost_state, judge_display, rewrite_row]
     corpus_btn.click(hitl_corpus_fn, [chatbot, cost_state, hitl_state], hitl_row_outputs)
-    web_btn.click(hitl_web_fn,       [chatbot, cost_state, hitl_state], hitl_row_outputs)
 
+    # Rewrite → Web
+    web_btn.click(hitl_web_fn, [chatbot, cost_state, hitl_state], hitl_row_outputs)
+
+    # Rephrase → full re-run
     rephrase_outputs = [chatbot, cost_display, cost_state, corpus_display, judge_display, hitl_state]
     rephrase_btn.click(hitl_rephrase_fn, [chatbot, cost_state, hitl_state], rephrase_outputs)
 
+    # Clear
     clear_btn.click(
         lambda: ([], "**Session cost:** $0.0000  \n**Last query:** $0.0000", 0.0,
                  _PLACEHOLDER_CORPUS, "*Faithfulness verdict will appear here.*", {},
-                 gr.update(visible=False), []),
-        outputs=[chatbot, cost_display, cost_state, corpus_display,
-                 judge_display, hitl_state, rewrite_row, session_log],
+                 gr.update(visible=False)),
+        outputs=[chatbot, cost_display, cost_state, corpus_display, judge_display, hitl_state, rewrite_row],
     )
 
+    # Export chat
     export_btn.click(export_chat, inputs=chatbot, outputs=export_file).then(
         lambda: gr.File(visible=True), outputs=export_file
     )
-
-    # Analytics loads only when the user clicks 🔄 Refresh (no auto-trigger on select/load
-    # because building 5 matplotlib figures synchronously freezes Gradio's event queue)
 
 
 if __name__ == "__main__":
