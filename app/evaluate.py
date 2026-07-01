@@ -112,7 +112,7 @@ def main():
         results.append(result)
 
         if category not in by_category:
-            by_category[category] = {"total": 0, "pass": 0}
+            by_category[category] = {"total": 0, "hits": 0}
         by_category[category]["total"] += 1
 
         passed = (
@@ -121,7 +121,7 @@ def main():
             or (category == "ambiguous"     and verdict in ("clarified", "broad_answer"))
         )
         if passed:
-            by_category[category]["pass"] += 1
+            by_category[category]["hits"] += 1
 
         # Small delay to stay within rate limits
         time.sleep(0.3)
@@ -134,27 +134,24 @@ def main():
     total_pass  = 0
     total_total = 0
     for cat, counts in by_category.items():
-        pct = counts["pass"] / counts["total"] * 100 if counts["total"] else 0
-        total_pass  += counts["pass"]
+        pct = counts["hits"] / counts["total"] * 100 if counts["total"] else 0
+        total_pass  += counts["hits"]
         total_total += counts["total"]
-        print(f"  {cat:<20s}  {counts['pass']}/{counts['total']}  ({pct:.0f}%)")
+        print(f"  {cat:<20s}  {counts['hits']}/{counts['total']}  ({pct:.0f}%)")
 
     overall_pct = total_pass / total_total * 100 if total_total else 0
     print(f"\n  {'OVERALL':<20s}  {total_pass}/{total_total}  ({overall_pct:.0f}%)")
     print(f"\n  Total cost: ${total_cost:.4f}")
     print("=" * 60)
 
-    # ── Save results 
+    # ── Save results
+    # Top-level "hit_rate" / "by_category" match scripts/eval_runner.py's schema
+    # so app/analytics.py can render either script's output interchangeably.
     output = {
-        "run_at":    datetime.now().isoformat(timespec="seconds"),
-        "summary":   {
-            cat: {
-                "pass":  v["pass"],
-                "total": v["total"],
-                "pct":   round(v["pass"] / v["total"] * 100, 1) if v["total"] else 0,
-            }
-            for cat, v in by_category.items()
-        },
+        "run_at":      datetime.now().isoformat(timespec="seconds"),
+        "hit_rate":    round(overall_pct / 100, 4) if total_total else None,
+        "total_cost":  round(total_cost, 6),
+        "by_category": by_category,
         "overall": {
             "pass":       total_pass,
             "total":      total_total,

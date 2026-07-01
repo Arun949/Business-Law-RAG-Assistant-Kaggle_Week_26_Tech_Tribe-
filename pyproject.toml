@@ -16,5 +16,10 @@ dependencies = [
     "requests",
     "signalbot",
     "duckduckgo-search",
+    "matplotlib",
+    "pandas",
 ]
+
+[tool.uv]
+package = false
 
