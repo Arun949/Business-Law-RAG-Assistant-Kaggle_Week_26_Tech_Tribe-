@@ -6,14 +6,6 @@ A Retrieval-Augmented Generation (RAG) application that answers questions about 
 
 ---
 
-## Team Members
-
-1. Arun Kumar Aluru
-2. Aishwarya Murthy
-3. Sathwika Raj Bandaru
-4. Nimisha Busaniwar
-
----
 
 ## What It Does
 
